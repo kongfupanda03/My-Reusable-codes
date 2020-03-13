@@ -3,9 +3,9 @@
 ***The reusable codes contains files for structure design(condig.py), code to auto install required packages, code for layer1 data cleaning***
 
 ## 1. Data Cleaning
-..*Data_clean class
-..*Data_read class
-..*File path catalog for integration purpose
+  *Data_clean class
+  *Data_read class
+  *File path catalog for integration purpose
 
 
 ## 2. FE

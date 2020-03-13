@@ -1,0 +1,190 @@
+# import modules and packages
+import os
+import sys
+
+#from sklearn.externals import joblib
+import joblib
+from sklearn.preprocessing import StandardScaler
+
+sys.path.append('./SourceCode')
+
+from Config import Env_Config
+from Load_Package import *
+from Global_fun import *
+#from FE.fun_kelly import * 
+
+class model_preprocessing():
+    
+    @classmethod
+    def extract_y_labels(cls,DF):
+        # Check if the dataset contains "needs" columns 
+        #COMMENT. use prefix in config
+        check_y_labels = len([x for x in DF.columns if Env_Config.prefix_Y in x])>0 
+    
+        if check_y_labels is True:
+            return DF.loc[:,[x for x in DF.columns if Env_Config.prefix_Y in x]]
+        else:
+            print('Dataframe does not contain y_labels')
+            return None
+
+    
+    @classmethod
+    def sliding_win_train_test_split(cls,train_data, test_data):
+        """ function is used to create training, testing and y labels data for model training
+            Inputs:
+                1. train_data - training dataset 
+                2. test_data - testing dataset
+            Outputs:
+                1. X_train - training dataset with features that are common to both training and testing datasets
+                1. Y_train - Y labels from training dataset 
+                1. X_test - testing dataset with features that are common to both training and testing datasets
+                1. Y_train - Y labels from testing dataset 
+        """
+                
+        # Training Y labels names (needs)
+        print('+++ Extract Y labels for training data --- \n')
+        Y_train = list(train_data.cust_needs.unique())
+         
+            
+        # Testing Y labels names (needs)
+        print('+++ Extract Y labels for testing data --- \n')
+        Y_test = list(train_data.cust_needs.unique())
+        
+        # To validate train and test data have same needs  
+        if set(Y_train) != set(Y_test):
+            sys.exit("Fun sliding_win_train_test_split: Y labels of training and testing are different")
+            
+        print('+++ Common feature names --- \n')
+        X_train_names = set(train_data.columns).difference(set(['cin','cust_needs','label']))     
+        #Note. X_train_names makes sure Y_labels and cin will not appear in common_fea_names                                   
+        common_fea_names = list(X_train_names.intersection(set(test_data.columns)))#add sort
+        common_fea_names.sort()
+        # Names are standarised here 
+        X_train = train_data.loc[:, common_fea_names]
+        X_test = test_data.loc[:, common_fea_names]
+
+        # Keep common features
+        return X_train.fillna(0), train_data['label'].fillna(0), X_test.fillna(0), test_data['label'].fillna(0)
+    #End of Function sliding_win_train_test_split
+    
+    
+    @classmethod
+    def sliding_win_train_test_split_OBS(cls,train_data, test_data):
+        """ function is used to create training, testing and y labels data for model training
+            Inputs:
+                1. train_data - training dataset
+                2. test_data - testing dataset
+            Outputs:
+                1. X_train - training dataset with features that are common to both training and testing datasets
+                1. Y_train - Y labels from training dataset 
+                1. X_test - testing dataset with features that are common to both training and testing datasets
+                1. Y_train - Y labels from testing dataset 
+        """
+        # COMMENT: dont remove cin, dont set cin as index
+        # UPDATE: remove remove_cin code portion
+        
+        # Training Y labels names (needs)
+        print('+++ Extract Y labels for training data --- \n')
+        Y_train = cls.extract_y_labels(train_data)
+        # Ouput of Y_train doesnt have cin 
+        
+        # Testing Y labels names (needs)
+        print('+++ Extract Y labels for testing data --- \n')
+        Y_test = cls.extract_y_labels(test_data)
+        # Output of Y_test doesnt have cin
+                           
+        # Simply union of columns
+        print('+++ Check Y labels --- \n')
+        check_labels = list(Y_train.columns) + list(Y_test.columns) # combine the column names
+        if Y_train is not None and Y_test is not None:
+            # COMMENT: no need y for y in columns
+            # UPDATE: remove comprenshive loop
+            check_labels = list(set(Y_train.columns).intersection(set(Y_test.columns)))
+            if len(check_labels) != Y_train.shape[1] or len(check_labels) != Y_test.shape[1]:
+                sys.exit('Y labels of training and testing are different')
+        
+        # Standardise the Y labels for interpretation
+        Y_train = Y_train.loc[:,check_labels]
+        
+        Y_test = Y_test.loc[:,check_labels]
+        
+        # Find training features names
+        # COMMENT - set(train_data.columns).difference(set(Y_train.columns).union(set(['cin']))
+        ## UPDATE - added union(set(cin)) with ylabels to remove cin from training data to create feature data
+        X_train_names = set(train_data.columns).difference(set(Y_train.columns).union(set(['cin']))) 
+        
+        # COMMENT try - set(train_data.columns).difference(set(Y_train.columns).union(set(['cin']))
+        ## UPDATE - added union(set(cin)) with ylabels to remove cin from testing data to create feature data
+        X_test_names = set(test_data.columns).difference(set(Y_test.columns).union(set(['cin']))) 
+        
+        # Find common features names 
+        print('+++ Common feature names --- \n')
+        common_fea_names = list(X_train_names.intersection(X_test_names))
+        
+        # Names are standarised here 
+        X_train = train_data.loc[:,common_fea_names]
+        X_test = test_data.loc[:,common_fea_names]
+
+        # Keep common features
+        return X_train.fillna(0), Y_train.fillna(0), X_test.fillna(0), Y_test.fillna(0)
+    
+    
+    @classmethod
+    def data_preprocessing(cls, train_fea, test_fea, save_scaled_data = False, save_scaler = False, scaler_file = None):
+        """ function that normalise data for model training 
+            Inputs:
+                1. train_fea -  training data (ensure that the data is all numeric)
+                2. test_fea - testing data (ensure that the data is all numeric)
+            
+            Outputs:
+                1. x_train_norm
+                2. x_test_norm
+                
+            # from sklearn import preprocessing
+            # NaNs are treated as missing values: disregarded in fit, and maintained in transform
+            # save the standard scaler - https://webcache.googleusercontent.com/search?q=cache:byvhLDdjsXEJ:https://stats.stackexchange.com/questions/392666/regarding-pre-processing-function-standardscaler-in-scikit-learn-library-how-to+&cd=2&hl=en&ct=clnk&gl=sg
+        """
+       
+        std_scale = StandardScaler().fit(train_fea)
+        x_train_norm = std_scale.transform(train_fea)
+        x_test_norm = std_scale.transform(test_fea)
+        
+        if scaler_file is None:
+            scaler_file = 'cs_scaler.save'
+            
+        # COMMENT - path use variable
+        # UPDATE - used output_model variable for directory
+        # COMMENT - save as feather
+        # UPDATE - save x_train and x_test as feather files
+        if save_scaled_data is True:
+            x_train_df = pd.DataFrame(x_train_norm, columns = list(train_fea.columns))
+            x_test_df = pd.DataFrame(x_test_norm, columns = list(test_fea.columns))
+            x_train_df.to_feather(fun_path_join(Env_Config.output_model, 'x_train_norm.feather'))
+            x_test_df.to_feather(fun_path_join(Env_Config.output_model, 'x_test_norm.feather'))
+
+        if '.save' not in scaler_file:
+            # append extension .save to the file name
+            scaler_file = '.'.join([scaler_file,'save'])
+        
+        if save_scaler is True:
+            joblib.dump(std_scale, fun_path_join(Env_Config.output_model, scaler_file))
+            print('To load file - scaler = joblib.load({})'.format(scaler_file))
+       
+        return x_train_norm, x_test_norm
+    
+        
+
+class data_preparation():
+    
+    @classmethod
+    def sparsity_analysis(cls, DF):
+        """ function to determine the sparisty of a matrix/dataframe
+            input:
+                1. dataframe/matrix
+            output: 
+                2. sparsity percentage
+                
+            function used to calculate sparsity:
+                def sparsity_features(series):
+                    # formula - count number of 0/ total number of elements 
+                    series =

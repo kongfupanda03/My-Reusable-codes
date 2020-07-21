@@ -1,0 +1,190 @@
+from Load_Package import *
+from Config import Env_Config
+
+class cls_sample_integrate(object):
+    """Class to combine features across 4 weeks in a month. It includes functions:
+       1) downsample on rows with 0's Y
+       2) 
+       3) 
+    """
+
+    def __init__(self, fea_top_k = 10, Y_2_N_ratio = 100):
+        """Function: to read in Y window start dates for the whole month
+            Input:   1) fea_top_k. Number of needs to be predicted
+                     2) Y_2_N_ratio. postive to negative ratio
+        """
+        #read in Y_start_date
+        Y_start_date_train = pd.read_csv(filepath_or_buffer = fun_path_join(Env_Config.source_code_path, "Y_start_time_train.csv"), 
+                                    dtype = dict.fromkeys(range(2), str))         
+
+        #all dates should be handled already
+        date_not_handled = Y_start_date_train.loc[Y_start_date_train.handled == "0",]
+        if date_not_handled.shape[0] > 0:
+            print("+++ Error: Following date has NOT been processed to generate training features ---")
+            print(date_not_handled)
+            sys.exit("Solution -- run FE on these dates")
+        else:
+            self.Y_start_date_train = Y_start_date_train['Y_start_time']
+            self.fea_top_k = fea_top_k
+            self.Y_2_N_ratio = Y_2_N_ratio
+            
+    #Enf of constructor
+    
+    def __fun_map_hist_Y_date(self):
+        """
+        """
+        Y_start_dates= self.Y_start_date_train
+        hist_end_dates = []
+        for y_start_date in Y_start_dates:
+            y_start_date = pd.to_datetime(y_start_date)
+            need_month_1st_day = pd.to_datetime(y_start_date.strftime('%Y-%m') + "-01")    
+            hist_win_end = need_month_1st_day - pd.DateOffset(days = 1)
+            hist_win_start = need_month_1st_day - pd.DateOffset(months = Env_Config.hist_win_size) 
+        
+        # KELLY -- needs window start date - his window end date < 7 days, shift hist window by one month
+            if (y_start_date - hist_win_end).days  < 7:
+                new_need_month_1st_day = y_start_date - pd.DateOffset(months = 1) 
+                new_need_month_1st_day = pd.to_datetime(new_need_month_1st_day.strftime('%Y-%m') + "-01")    
+                hist_win_end = new_need_month_1st_day - pd.DateOffset(days = 1)
+                hist_win_start = new_need_month_1st_day - pd.DateOffset(months = Env_Config.hist_win_size)
+            
+            str_hist_win_end = hist_win_end.strftime('%Y-%m-%d')    
+            hist_end_dates.append(str_hist_win_end) 
+        date_mapping = pd.DataFrame(data = hist_end_dates,columns=['hist_end_date'], index=Y_start_dates)
+        self.date_map = date_mapping
+    
+    def fun_model_binarisation(self,data,hist_end_date,label=True):
+        #pend add in label flag: if label exists
+        
+        """
+        Function: To integrate fea_all with top10 need FE and melt labels
+        Input: 
+              data: fea_all one win data
+              hist_end_date: string format of end date of history window
+              label: To indicate in testing data if label exists,default is True
+        Output: Data.Frame
+        """
+          
+        print("+++ History window end date: {}---".format(hist_end_date))
+        fe_top10 = pd.read_feather(fun_path_join(Env_Config.output_FE_train, "Top10_Needs_Hist_" + hist_end_date + ".feather"))
+        
+        #filter Y_labels in data
+        if label:
+            #To extract the cin and needs cols
+            cols_labels = [col for col in data.columns if col.startswith(Env_Config.prefix_Y)]
+            cols = ['cin'] + cols_labels
+            df_y_labels = data.loc[:,cols]
+            #check if fe_top10 needs and df_y_long needs match
+            if set(cols_labels) == set(list(fe_top10['cust_needs'])):
+                print("+++ labels match correctly ---")
+            else:
+                print('top 10 needs: ', fe_top10['cust_needs'])
+                print('fea_one_week needs: ',cols_labels)
+                sys.exit(" +++ labels not match ---")
+        else: ##add in labels and fill with 0        
+            cols_labels = list(fe_top10['cust_needs'])
+            df_y_labels = pd.DataFrame(np.zeros((data.shape[0],len(cols_labels))),columns=cols_labels,dtype=int)
+            #append cin column to df_y_labels
+            df_y_labels['cin'] = data['cin']
+                           
+                               
+        #Wide to long
+        print("+++ Covert needs matrix to label ---")
+        df_y_long = pd.melt(df_y_labels, id_vars= ['cin'],value_vars=cols_labels,var_name = 'cust_needs',value_name='label')
+        
+        #integrate top 10 needs fe with df_y_long
+        print("+++ merge needs FE and binarised labels ---")
+        df_y_top10 = pd.merge(left=df_y_long,right=fe_top10,how='inner', on='cust_needs')
+        del fe_top10
+        
+        #change label column to last column
+        new_cols=list(x for x in df_y_top10.columns if x !='label') + ['label']
+        df_y_top10 = df_y_top10[new_cols]
+        
+        #integrate with hist and event features
+        print("+++ integrate with all hist/event features ---")
+        fea_cols = list(set(data.columns) - set(cols_labels))
+        df_integrate = pd.merge(left=data[fea_cols],right = df_y_top10, how = 'inner',on='cin')
+        
+        col_new = col_new = ['cin']+[col for col in df_integrate.columns if col not in ['cin','cust_needs','label']]+['cust_needs','label']
+        df_integrate = df_integrate[col_new]
+        print('integrated data shape is : {}'.format(df_integrate.shape))
+        
+        return df_integrate
+      
+
+    def fun_sample_integrate(self):
+        """Function: To integrate the features across the 4 weeks
+            Input:   1)                      
+            Output:  The consolidated features
+        """
+        fea_combined = None
+        #downsample features week by week
+        self.__fun_map_hist_Y_date()
+        for Y_start_date in self.Y_start_date_train:
+            print("+++ Process week: {}---".format(Y_start_date))
+            hist_win_end = self.date_map.loc[Y_start_date,'hist_end_date']
+            print("+++ History windown ends date : {}".format(hist_win_end))
+            fea_one_week = self.__fun_downsample_on_week(Y_start_date = Y_start_date)
+            
+            df_one_week_int = self.fun_model_binarisation(data = fea_one_week,hist_end_date=hist_win_end)
+            
+            if fea_combined is None:
+                #fea_combined = fea_one_week
+                fea_combined = df_one_week_int
+            else:
+                #fea_combined_old = fea_combined.append(fea_one_week, ignore_index=True, sort=False)
+                # Find common features to append to fea_combined
+                common_fea = list(set(fea_combined.columns).intersection(set(df_one_week_int.columns)))
+                # fea combined
+                fea_combined = pd.concat([fea_combined[common_fea],df_one_week_int[common_fea]],ignore_index=True, sort=False)   
+                
+        return fea_combined
+    #End of Function 'fun_sample_integrate'
+
+    def __fun_downsample_on_week(self, Y_start_date):
+        """Function: to downsample features of 1 week
+            Input:   1) Y_start_date. By which we get the features of the week
+            Output:  the sampled features
+        """
+        #read in features for the week
+        print('Downsample on the week - ' + str(Y_start_date))
+        DF_fea = pd.read_feather(fun_path_join(Env_Config.output_FE_train, "FEA_all_" + Y_start_date + ".feather"))
+
+        ### downsample
+        regex = "^" + Env_Config.prefix_Y
+        DF_Y = DF_fea.filter(regex= regex)
+        if DF_Y.shape[1] != self.fea_top_k:
+            print(DF_Y.columns)
+            sys.exit("Error -- incorrect number of needs")
+
+        DF_fea['Y_with_value'] = DF_Y.sum(axis=1)
+        DF_fea['Y_with_value'] = DF_fea['Y_with_value'].apply(lambda x: x>0)
+
+        #rows with customer call and without call
+        Y_above_0 = DF_fea.loc[DF_fea.Y_with_value == True,]        
+        Y_equal_0 = DF_fea.loc[DF_fea.Y_with_value == False,]
+
+        #negative samples
+        num_neg = int(round(Y_above_0.shape[0]/self.Y_2_N_ratio))
+        
+        if num_neg < 1:
+            num_neg = 1
+        
+        if num_neg < Y_equal_0.shape[0]:
+            sample_Y_equal_0 = Y_equal_0.sample(n=num_neg, random_state = 2020)
+        else:
+            sample_Y_equal_0 = Y_equal_0
+        
+        #combine pos and neg
+        rslt = Y_above_0.append(sample_Y_equal_0, ignore_index=True)
+        num_Y_N = rslt.Y_with_value.value_counts()
+        print("+++ pos: {}, neg: {} ---".format(num_Y_N[1], num_Y_N[0]))
+
+        #drop Y_with_value, and then return features
+        rslt = rslt.drop(columns =['Y_with_value'])
+        return rslt
+        #End of Function '__fun_downsample_on_week'
+
+
+#End of class 'cls_sample_integrate'

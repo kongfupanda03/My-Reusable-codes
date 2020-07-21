@@ -211,7 +211,7 @@ class cls_auto_DNN(object):
                                 output_dim = self.output_dim, 
                                 activation_hidden = self.activation_hidden,
                                 activation_output = self.activation_output,
-                                # eval_metrics = ['accuracy'], #Not allowed. WHY?
+                                # eval_metrics = ['accuracy'], #Not allowed.
                                 loss_fun = self.loss_fun,                                 
                                 verbose=0)
         
